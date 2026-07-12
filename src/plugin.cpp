@@ -27,12 +27,10 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
     SKSE::Init(skse);
 	SetupLog();
 
-
     auto messaging = SKSE::GetMessagingInterface();
 	if (!messaging->RegisterListener("SKSE", MessageHandler)) {
 		return false;
 	}
 
-	
     return true;
 }

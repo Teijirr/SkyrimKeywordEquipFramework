@@ -8,12 +8,13 @@
         "nlohmann-json"
     ],
 	"overrides": [
-	{
-	  "name": "fmt",
-	  "version": "10.1.1"
-	},
-	{
-	  "name": "spdlog",
-	  "version": "1.12.0"
-	}
+		{
+			"name": "fmt",
+			"version": "10.1.1"
+		},
+		{
+			"name": "spdlog",
+			"version": "1.12.0"
+		}
+	]
 }
