@@ -18,16 +18,8 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
     }
 
     const auto npc = a_actor->GetActorBase();
-    if (!npc) {
-        return;
-    }
-
-    if (a_actor->IsDead())
-    {
-        return;
-    }
-
-    if (!npc->keywords) {
+    if (!npc || a_actor->IsDead() || !npc->keywords) {
+        g_ProcessedActors.insert(a_actor->GetFormID());
         return;
     }
 
@@ -49,12 +41,24 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
 
         RE::TESBoundObject* targetItem = nullptr;
 
+        bool forceEquip = false;
+
         if (auto it = g_KeywordItemCache.find(keyword); it != g_KeywordItemCache.end()) {
             targetItem = it->second;
             //SKSE::log::info("Cache hit for keyword '{}' -> {}", name, targetItem ? targetItem->GetName() : "nullptr (previously failed)");
         }
         else {
             std::string_view data = name.substr(9);
+
+            size_t forcePos = data.rfind("_forceEquip_");
+            if (forcePos != std::string_view::npos) {
+                std::string_view flag = data.substr(forcePos + 12);
+                if (flag == "true" || flag == "1") {
+                    forceEquip = true;
+                }
+                data = data.substr(0, forcePos);
+            }
+
             size_t first = data.find('_');
             size_t last = data.rfind('_');
 
@@ -118,7 +122,6 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
 
         bool isWorn = false;
         int32_t count = 0;
-
         if (it != inventory.end()) {
             count = it->second.first;
             if (it->second.second) {
@@ -126,25 +129,41 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
             }
         }
 
-        //SKSE::log::info("Actor {} has {} copies of {}, worn: {}", a_actor->GetName(), count, targetItem->GetName(), isWorn);
+        bool shouldEquip = !isWorn;
+        if (!forceEquip) {
+            if (auto* armor = targetItem->As<RE::TESObjectARMO>()) {
+                auto armorSlot = static_cast<RE::BGSBipedObjectForm::BipedObjectSlot>(armor->GetSlotMask());
+                auto* currentlyWorn = a_actor->GetWornArmor(armorSlot);
 
-        if (count <= 0) {
-            //SKSE::log::info("Actor {} doesn't have the item — adding one to inventory", a_actor->GetName());
-            a_actor->AddObjectToContainer(targetItem, nullptr, 1, nullptr);
+                if (currentlyWorn)
+                {
+                    shouldEquip = false;
+                }
+            }
+            else if(!isWorn) {
+                shouldEquip = true;
+            }
         }
 
-        if (isWorn) {
-            //SKSE::log::info("Item already worn on {}, skipping equip", a_actor->GetName());
-        }
-        else {
+        if (shouldEquip) {
+            if (count <= 0)
+            {
+                //SKSE::log::info("Actor {} doesn't have the item — adding one to inventory", a_actor->GetName());
+                a_actor->AddObjectToContainer(targetItem, nullptr, 1, nullptr);
+            }
+
             auto* equipManager = RE::ActorEquipManager::GetSingleton();
             if (!equipManager) {
                 SKSE::log::error("ActorEquipManager singleton is null!");
                 continue;
             }
 
-            SKSE::log::info("SUCCESS - Item {} equipped on actor {}", targetItem->GetName(), a_actor->GetName());
             equipManager->EquipObject(a_actor, targetItem, nullptr, 1, nullptr, false, true, false, true);
+
+            SKSE::log::info("SUCCESS - Item {} equipped on actor {}", targetItem->GetName(), a_actor->GetName());
+        }
+        else {
+            //SKSE::log::info("Item already worn or slot already taken on {}, skipping equip", a_actor->GetName());
         }
     }
     
