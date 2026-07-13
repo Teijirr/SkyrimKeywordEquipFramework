@@ -22,6 +22,11 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
         return;
     }
 
+    if (a_actor->IsDead())
+    {
+        return;
+    }
+
     if (!npc->keywords) {
         return;
     }
@@ -40,14 +45,13 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
             continue;
         }
 
-        SKSE::log::info("Keyword matched prefix '{}': {}", g_KEFPrefix, name);
+        //SKSE::log::info("Keyword matched prefix '{}': {}", g_KEFPrefix, name);
 
         RE::TESBoundObject* targetItem = nullptr;
 
         if (auto it = g_KeywordItemCache.find(keyword); it != g_KeywordItemCache.end()) {
             targetItem = it->second;
-            SKSE::log::info("Cache hit for keyword '{}' -> {}", name,
-                targetItem ? targetItem->GetName() : "nullptr (previously failed)");
+            //SKSE::log::info("Cache hit for keyword '{}' -> {}", name, targetItem ? targetItem->GetName() : "nullptr (previously failed)");
         }
         else {
             std::string_view data = name.substr(9);
@@ -65,7 +69,7 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
             std::string ext{ data.substr(last + 1) };
             std::string fullPluginName = modName + "." + ext;
 
-            SKSE::log::info("Parsed data - FormID Hex: {}, Plugin Name: {}", formIdHex, fullPluginName);
+            //SKSE::log::info("Parsed data - FormID Hex: {}, Plugin Name: {}", formIdHex, fullPluginName);
 
             try {
                 std::uint32_t rawFormID = std::stoul(formIdHex, nullptr, 16);
@@ -90,7 +94,7 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
                             rawFormID, fullPluginName, static_cast<std::uint32_t>(rawForm->GetFormType()));
                     }
                     else {
-                        SKSE::log::info("Item lookup success: {}", targetItem->GetName());
+                        //SKSE::log::info("Item lookup success: {}", targetItem->GetName());
                     }
                 }
             }
@@ -122,15 +126,15 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
             }
         }
 
-        SKSE::log::info("Actor {} has {} copies of {}, worn: {}", a_actor->GetName(), count, targetItem->GetName(), isWorn);
+        //SKSE::log::info("Actor {} has {} copies of {}, worn: {}", a_actor->GetName(), count, targetItem->GetName(), isWorn);
 
         if (count <= 0) {
-            SKSE::log::info("Actor {} doesn't have the item — adding one to inventory", a_actor->GetName());
+            //SKSE::log::info("Actor {} doesn't have the item — adding one to inventory", a_actor->GetName());
             a_actor->AddObjectToContainer(targetItem, nullptr, 1, nullptr);
         }
 
         if (isWorn) {
-            SKSE::log::info("Item already worn on {}, skipping equip", a_actor->GetName());
+            //SKSE::log::info("Item already worn on {}, skipping equip", a_actor->GetName());
         }
         else {
             auto* equipManager = RE::ActorEquipManager::GetSingleton();
@@ -139,7 +143,7 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
                 continue;
             }
 
-            SKSE::log::info("SUCCESS - Forcing equip of item on actor {}", a_actor->GetName());
+            SKSE::log::info("SUCCESS - Item {} equipped on actor {}", targetItem->GetName(), a_actor->GetName());
             equipManager->EquipObject(a_actor, targetItem, nullptr, 1, nullptr, false, true, false, true);
         }
     }
