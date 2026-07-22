@@ -1,11 +1,37 @@
 #include "log.h"
 #include <unordered_map>
 #include <unordered_set>
+#include <random>
 
 static auto g_KEFPrefix = "KEFEquip_";
-static std::unordered_map<RE::BGSKeyword*, RE::TESBoundObject*> g_KeywordItemCache;
+
+static std::unordered_map<RE::BGSKeyword*, RE::TESForm*> g_KeywordFormCache;
+static std::unordered_map<RE::BGSKeyword*, bool> g_KeywordForceEquipCache;
 static std::unordered_set<RE::FormID> g_ProcessedActors;
 static std::mutex g_KEFMutex;
+
+static thread_local std::mt19937 g_RNG{ std::random_device{}() };
+
+static RE::TESBoundObject* ResolveLeveledItem(RE::TESLevItem* a_lvli, int a_depth = 0)
+{
+    if (!a_lvli || a_depth > 5 || a_lvli->entries.empty()) {
+        return nullptr;
+    }
+
+    std::uniform_int_distribution<size_t> dist(0, a_lvli->entries.size() - 1);
+    size_t index = dist(g_RNG);
+    auto& entry = a_lvli->entries[index];
+
+    if (!entry.form) {
+        return nullptr;
+    }
+
+    if (auto* nestedList = entry.form->As<RE::TESLevItem>()) {
+        return ResolveLeveledItem(nestedList, a_depth + 1);
+    }
+
+    return entry.form->As<RE::TESBoundObject>();
+}
 
 void ProcessKEFKeywords(RE::Actor* a_actor)
 {
@@ -39,13 +65,15 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
 
         //SKSE::log::info("Keyword matched prefix '{}': {}", g_KEFPrefix, name);
 
-        RE::TESBoundObject* targetItem = nullptr;
-
+        RE::TESForm* resolvedForm = nullptr;
         bool forceEquip = false;
 
-        if (auto it = g_KeywordItemCache.find(keyword); it != g_KeywordItemCache.end()) {
-            targetItem = it->second;
-            //SKSE::log::info("Cache hit for keyword '{}' -> {}", name, targetItem ? targetItem->GetName() : "nullptr (previously failed)");
+        auto formCacheIt = g_KeywordFormCache.find(keyword);
+        if (formCacheIt != g_KeywordFormCache.end()) {
+            resolvedForm = formCacheIt->second;
+            auto forceIt = g_KeywordForceEquipCache.find(keyword);
+            forceEquip = (forceIt != g_KeywordForceEquipCache.end()) && forceIt->second;
+            //SKSE::log::info("Cache hit for keyword '{}'", name);
         }
         else {
             std::string_view data = name.substr(9);
@@ -64,7 +92,8 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
 
             if (first == std::string_view::npos || last == std::string_view::npos || first == last) {
                 SKSE::log::error("Failed parsing underscore structure for string: {}", data);
-                g_KeywordItemCache[keyword] = nullptr;
+                g_KeywordFormCache[keyword] = nullptr;
+                g_KeywordForceEquipCache[keyword] = forceEquip;
                 continue;
             }
 
@@ -81,7 +110,8 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
 
                 if (!dataHandler) {
                     SKSE::log::error("TESDataHandler singleton is null!");
-                    g_KeywordItemCache[keyword] = nullptr;
+                    g_KeywordFormCache[keyword] = nullptr;
+                    g_KeywordForceEquipCache[keyword] = forceEquip;
                     continue;
                 }
 
@@ -89,29 +119,46 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
 
                 if (!rawForm) {
                     SKSE::log::error("Failed to resolve form [{:X}] from plugin {}", rawFormID, fullPluginName);
-                    targetItem = nullptr;
+                    resolvedForm = nullptr;
                 }
                 else {
-                    targetItem = rawForm->As<RE::TESBoundObject>();
-                    if (!targetItem) {
-                        SKSE::log::error("Form [{:X}] in {} exists but is not a TESBoundObject (type: {})",
-                            rawFormID, fullPluginName, static_cast<std::uint32_t>(rawForm->GetFormType()));
-                    }
-                    else {
-                        //SKSE::log::info("Item lookup success: {}", targetItem->GetName());
-                    }
+                    resolvedForm = rawForm;
+                    //SKSE::log::info("Form lookup success: {}", rawForm->GetName());
                 }
             }
             catch (const std::exception& e) {
                 SKSE::log::error("Exception caught during processing: {}", e.what());
-                targetItem = nullptr;
+                resolvedForm = nullptr;
             }
             catch (...) {
                 SKSE::log::error("Unknown exception caught during processing");
-                targetItem = nullptr;
+                resolvedForm = nullptr;
             }
 
-            g_KeywordItemCache[keyword] = targetItem;
+            g_KeywordFormCache[keyword] = resolvedForm;
+            g_KeywordForceEquipCache[keyword] = forceEquip;
+        }
+
+        if (!resolvedForm) {
+            continue;
+        }
+
+        RE::TESBoundObject* targetItem = nullptr;
+
+        if (auto* levItem = resolvedForm->As<RE::TESLevItem>()) {
+            targetItem = ResolveLeveledItem(levItem);
+            if (!targetItem) {
+                SKSE::log::error("Failed to resolve a valid item from leveled list '{}'", name);
+            }
+            else {
+                //SKSE::log::info("Leveled list resolved to item: {}", targetItem->GetName());
+            }
+        }
+        else {
+            targetItem = resolvedForm->As<RE::TESBoundObject>();
+            if (!targetItem) {
+                SKSE::log::error("Form in keyword '{}' exists but is not a TESBoundObject (type: {})", name, static_cast<std::uint32_t>(resolvedForm->GetFormType()));
+            }
         }
 
         if (!targetItem) {
@@ -140,7 +187,7 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
                     shouldEquip = false;
                 }
             }
-            else if(!isWorn) {
+            else if (!isWorn) {
                 shouldEquip = true;
             }
         }
@@ -166,7 +213,7 @@ void ProcessKEFKeywords(RE::Actor* a_actor)
             //SKSE::log::info("Item already worn or slot already taken on {}, skipping equip", a_actor->GetName());
         }
     }
-    
+
     g_ProcessedActors.insert(a_actor->GetFormID());
 }
 
@@ -205,29 +252,29 @@ void OnDataLoaded()
 
 void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 {
-	switch (a_msg->type) {
-	case SKSE::MessagingInterface::kDataLoaded:
-		OnDataLoaded();
-		break;
-	case SKSE::MessagingInterface::kPostLoad:
-		break;
-	case SKSE::MessagingInterface::kPreLoadGame:
-		break;
-	case SKSE::MessagingInterface::kPostLoadGame:
+    switch (a_msg->type) {
+    case SKSE::MessagingInterface::kDataLoaded:
+        OnDataLoaded();
         break;
-	case SKSE::MessagingInterface::kNewGame:
-		break;
-	}
+    case SKSE::MessagingInterface::kPostLoad:
+        break;
+    case SKSE::MessagingInterface::kPreLoadGame:
+        break;
+    case SKSE::MessagingInterface::kPostLoadGame:
+        break;
+    case SKSE::MessagingInterface::kNewGame:
+        break;
+    }
 }
 
-SKSEPluginLoad(const SKSE::LoadInterface *skse) {
+SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
-	SetupLog();
+    SetupLog();
 
     auto messaging = SKSE::GetMessagingInterface();
-	if (!messaging->RegisterListener("SKSE", MessageHandler)) {
-		return false;
-	}
+    if (!messaging->RegisterListener("SKSE", MessageHandler)) {
+        return false;
+    }
 
     return true;
 }
